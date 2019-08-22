@@ -1,10 +1,11 @@
-from rest_framework import serializers
+from rest_framework import serializers, exceptions
 
 from lib.api.fields import NestedHyperlinkedIdentityField
 from lib.api.serializers import AplusModelSerializer, NestedHyperlinkedIdentityFieldWithQuery
 from exercise.api.serializers import ExerciseBriefSerializer
 from userprofile.api.serializers import UserBriefSerializer
 from ..models import (
+    CourseInstance,
     CourseModule,
     UserTag,
     UserTagging,
@@ -49,9 +50,10 @@ class CourseSerializer(CourseBriefSerializer):
     ...
     """
     exercises = NestedHyperlinkedIdentityField(view_name='api:course-exercises-list', format='html')
+    points = NestedHyperlinkedIdentityField(view_name='api:course-points-list', format='html')
     students = NestedHyperlinkedIdentityField(view_name='api:course-students-list', format='html')
-    usertags = NestedHyperlinkedIdentityField(view_name='api:course-usertags-list', format='html')
     taggings = NestedHyperlinkedIdentityField(view_name='api:course-taggings-list', format='html')
+    usertags = NestedHyperlinkedIdentityField(view_name='api:course-usertags-list', format='html')
     my_points = NestedHyperlinkedIdentityField(
         view_name='api:course-points-detail',
         lookup_map={
@@ -75,10 +77,12 @@ class CourseSerializer(CourseBriefSerializer):
             'starting_time',
             'ending_time',
             'visible_to_students',
+            # links
             'exercises',
+            'points',
             'students',
-            'usertags',
             'taggings',
+            'usertags',
             'my_points',
             'my_data',
             'data',
@@ -108,6 +112,17 @@ class CourseUsertagSerializer(CourseUsertagBriefSerializer):
             'font_white',
             'taggings',
         )
+
+    def validate(self, data):
+        # Name is enough, slug will be automatically generated 
+        data = super().validate(data)
+        if not data['name']:
+            raise serializers.ValidationError("At minimum, field 'name' is required")
+        return data
+
+    def create(self, validated_data):
+        validated_data['course_instance_id'] = self.context['course_id']
+        return super().create(validated_data)
 
 
 class CourseUsertaggingsSerializer(AplusModelSerializer):
@@ -142,7 +157,7 @@ class CourseUsertaggingsSerializer(AplusModelSerializer):
         fields_in_user = { f for f in self._required if f in user }
         if not fields_in_user:
             raise serializers.ValidationError(
-                'At least one of {} is required'.format(self._required)
+                "At least one of {} is required".format(self._required)
             )
         return data
 
@@ -152,21 +167,35 @@ class CourseUsertaggingsSerializer(AplusModelSerializer):
         tag_dict = validated_data['tag']
 
         first_in_required = [ f for f in self._required if f in user_dict ][0]
-        user = {
-            'id': lambda: UserProfile.objects.get(user__id=user_dict['id']),
-            'student_id': lambda: UserProfile.get_by_student_id(user_dict['student_id']),
-            'username': lambda: UserProfile.objects.get(user__username=user_dict['username']),
-            'email': lambda: UserProfile.get_by_email(user_dict['email']),
-        }[first_in_required]()
-        tag = UserTag.objects.get(
-            slug=tag_dict['slug'],
-            course_instance=self.context['course_id']
-        )
-
+        try:    
+            user = {
+                'id': lambda: UserProfile.objects.get(user__id=user_dict['id']),
+                'student_id': lambda: UserProfile.get_by_student_id(user_dict['student_id']),
+                'username': lambda: UserProfile.objects.get(user__username=user_dict['username']),
+                'email': lambda: UserProfile.get_by_email(user_dict['email']),
+            }[first_in_required]()
+            tag = UserTag.objects.get(
+               slug=tag_dict['slug'],
+               course_instance=self.context['course_id']
+            )
+        except UserTag.DoesNotExist:
+            # 404 with description
+            raise exceptions.NotFound(
+                 "Tag with slug {slug} was not found".format(
+                     slug=tag_dict['slug']
+                 )
+            )
+        except UserProfile.DoesNotExist:
+            raise exceptions.NotFound(
+                 "User identified with {key}:{value} was not found".format(
+                     key=first_in_required,
+                     value=user_dict[first_in_required]
+                 )
+            )
         obj, created = UserTagging.objects.set(user, tag)
         if not created:
             raise serializers.ValidationError(
-                'User {user} already has tag {slug}'.format(
+                "User {user} already has tag {slug}".format(
                     user=user.user.username,
                     slug=tag.slug,
                 )

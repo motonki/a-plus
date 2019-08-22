@@ -184,6 +184,30 @@ In addition, you can start from [apache2/shibboleth2.xml](apache2/shibboleth2.xm
 More details below for both web servers.
 
 
+### Key generation
+
+Here is a command to create `sp-key.pem` and `sp-cert.pem` files.
+As of writing, `shib-keygen` does create too small keys and uses sha1 for hashing.
+Due to security considerations, you should use following instead:
+
+    # set your domain here and then copy-paste command below
+    host=$(hostname)
+    entityid=https://$host
+
+    cd /etc/shibboleth
+    printf '[req]\ndistinguished_name=req\n[san]\nsubjectAltName=DNS:%s, URI:%s\n' "$host" "$entityid" | \
+    openssl req -x509 -sha256 -nodes \
+      -newkey rsa:4096 -keyout sp-key.pem \
+      -days 3650 -out sp-cert.pem \
+      -subj "/CN=$host" -extensions san -config /dev/stdin
+    chown _shibd:_shibd sp-cert.pem sp-key.pem
+    chmod 0400 sp-key.pem
+
+You can print the certificate information with this command:
+
+    openssl x509 -in /etc/shibboleth/sp-cert.pem -noout -text
+
+
 Apache 2 configuration
 ----------------------
 
@@ -232,14 +256,17 @@ If you are using shibboleth
  1. Shibboleth configuration in The `local_settings.py`
 
     Map your federations variables to ones used in A+.
-    Here is the default mapping, which you can override in `local_settings.py`:
+    Most of the values are common, so only defining `PREFIX` should be enough.
+    Currently, `STUDENT_DOMAIN` is a required variable, as A+ presumes student numbers to be from a single domain.
+    Rest of the options are documented in `settings.py`.
 
-        SHIB_USER_ID_KEY = 'SHIB_eppn'
-        SHIB_FIRST_NAME_KEY = 'SHIB_givenName'
-        SHIB_LAST_NAME_KEY = 'SHIB_sn'
-        SHIB_MAIL_KEY = 'SHIB_mail'
-        SHIB_STUDENT_ID_KEY = 'SHIB_schacPersonalUniqueCode'
-
+        sudo tee -a /srv/aplus/a-plus/aplus/local_settings.py << EOF
+        # Shibboleth
+        SHIBBOLETH_ENVIRONMENT_VARS = {
+            'PREFIX': 'SHIB_',
+            'STUDENT_DOMAIN': 'example.com', # XXX: change this!
+        }
+        EOF
 
  1. Reload shibboleth
 
@@ -352,17 +379,17 @@ This module uses fastcgi and shibboleth scripts to provide similar integration a
 
  1. Shibboleth configuration in The `local_settings.py`
 
-    Shibboleth under NGINX delivers shibboleth variables via the request environment,
-    thus following mapping is required.
-    If your federation uses different variables, remember to change them.
+    Map your federations variables to ones used in A+.
+    Most of the values are common, so only defining `PREFIX` should be enough.
+    Currently, `STUDENT_DOMAIN` is a required variable, as A+ presumes student numbers to be from a single domain.
+    Rest of the options are documented in `settings.py`.
 
         sudo tee -a /srv/aplus/a-plus/aplus/local_settings.py << EOF
         # Shibboleth
-        SHIB_USER_ID_KEY = 'HTTP_SHIB_EPPN'
-        SHIB_FIRST_NAME_KEY = 'HTTP_SHIB_GIVENNAME'
-        SHIB_LAST_NAME_KEY = 'HTTP_SHIB_SN'
-        SHIB_MAIL_KEY = 'HTTP_SHIB_MAIL'
-        SHIB_STUDENT_ID_KEY = 'HTTP_SHIB_SCHACPERSONALUNIQUECODE'
+        SHIBBOLETH_ENVIRONMENT_VARS = {
+            'PREFIX': 'HTTP_SHIB_',
+            'STUDENT_DOMAIN': 'example.com', # XXX: change this!
+        }
         EOF
 
  1. Reload shibboleth

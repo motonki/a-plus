@@ -11,6 +11,8 @@ from userprofile.models import UserProfile
 from userprofile.permissions import IsAdminOrUserObjIsSelf
 
 from ..models import (
+    USERTAG_EXTERNAL,
+    USERTAG_INTERNAL,
     CourseInstance,
     CourseModule,
     UserTag,
@@ -84,7 +86,11 @@ class CourseStudentsViewSet(NestedViewSetMixin,
 class CourseUsertagsViewSet(NestedViewSetMixin,
                             CourseModuleResourceMixin,
                             CourseResourceMixin,
-                            viewsets.ReadOnlyModelViewSet):
+                            mixins.CreateModelMixin,
+                            mixins.RetrieveModelMixin,
+                            mixins.DestroyModelMixin,
+                            mixins.ListModelMixin,
+                            viewsets.GenericViewSet):
     permission_classes = api_settings.DEFAULT_PERMISSION_CLASSES + [
         OnlyCourseTeacherPermission,
     ]
@@ -93,6 +99,17 @@ class CourseUsertagsViewSet(NestedViewSetMixin,
     serializer_class = CourseUsertagSerializer
     queryset = UserTag.objects.all()
     parent_lookup_map = {'course_id': 'course_instance_id'}
+
+    def filter_queryset(self, queryset):
+        queryset = super().filter_queryset(queryset)
+        tags = [USERTAG_INTERNAL, USERTAG_EXTERNAL]
+        tags.extend(queryset.all())
+        return tags
+   
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context.update({ 'course_id': self.kwargs['course_id'] })
+        return context
 
 
 class CourseUsertaggingsViewSet(NestedViewSetMixin,
